@@ -321,47 +321,68 @@ async function updateDiscussion(octokit: Octokit, record: UpdateRecord) {
   );
 }
 
+async function run(env: Env) {
+  const notion = new Client({
+    auth: env.NOTION_TOKEN,
+    notionVersion: "2022-02-22",
+  });
+  const n2m = new NotionToMarkdown({ notionClient: notion });
+  const octokit = new Octokit({ auth: env.GH_BOT_TOKEN });
+  const login = await getBotLogin(octokit);
+  const relevantPages = await getSharedNotionPages(notion);
+  const discussions = await getExistingDiscussions(octokit, login);
+  const plan = await buildUpdatePlan(octokit, n2m, relevantPages, discussions);
+
+  console.info(`Built sync plan:`, plan);
+
+  for (const item of plan.delete) {
+    console.info(
+      `Deleting discussion with id ${item.discussion.id}: "${item.discussion.title}"`
+    );
+    await deleteDiscussion(octokit, item);
+  }
+
+  for (const item of plan.update) {
+    console.info(
+      `Updating discussion with id ${item.discussion.id}: "${item.title}"`
+    );
+    await updateDiscussion(octokit, item);
+  }
+
+  for (const item of plan.create) {
+    console.info(`Creating discussion: "${item.title}"`);
+    await createDiscussion(octokit, item);
+  }
+
+  return plan;
+}
+
 export default {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<Response> {
+    try {
+      const plan = await run(env);
+
+      return new Response(JSON.stringify({ plan }), { status: 200 });
+    } catch (e) {
+      return new Response(
+        JSON.stringify({
+          error: (e as Error).message,
+        }),
+        {
+          status: 500,
+        }
+      );
+    }
+  },
   async scheduled(
     controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    const notion = new Client({
-      auth: env.NOTION_TOKEN,
-      notionVersion: "2022-02-22",
-    });
-    const n2m = new NotionToMarkdown({ notionClient: notion });
-    const octokit = new Octokit({ auth: env.GH_BOT_TOKEN });
-    const login = await getBotLogin(octokit);
-    const relevantPages = await getSharedNotionPages(notion);
-    const discussions = await getExistingDiscussions(octokit, login);
-    const plan = await buildUpdatePlan(
-      octokit,
-      n2m,
-      relevantPages,
-      discussions
-    );
-
-    console.info(`Built sync plan:`, plan);
-
-    for (const item of plan.delete) {
-      console.info(
-        `Deleting discussion with id ${item.discussion.id}: "${item.discussion.title}"`
-      );
-      await deleteDiscussion(octokit, item);
-    }
-
-    for (const item of plan.update) {
-      console.info(
-        `Updating discussion with id ${item.discussion.id}: "${item.title}"`
-      );
-      await updateDiscussion(octokit, item);
-    }
-
-    for (const item of plan.create) {
-      console.info(`Creating discussion: "${item.title}"`);
-      await createDiscussion(octokit, item);
-    }
+    await run(env);
   },
 };
