@@ -8,7 +8,7 @@ export interface Env {
   GH_BOT_TOKEN: string;
 }
 
-const NOTE = `\n> This page is synced automatically from [The Guild's Notion](the-guild.dev)`;
+const HEADER_NOTE = `> This page is synced automatically from [The Guild's Notion](the-guild.dev)`;
 
 async function getBotLogin(octokit: Octokit) {
   const {
@@ -30,6 +30,14 @@ async function getSharedNotionPages(notion: Client) {
   });
 
   return relevantPages.results;
+}
+
+function composeLink(page: Page): string {
+  if ((page as any).url) {
+    return `> Notion page URL: ${(page as any).url}`;
+  }
+
+  return "";
 }
 
 function composeSignature(pageId: string): string {
@@ -178,9 +186,9 @@ async function buildUpdatePlan(
 
         toUpdate.push({
           page,
-          body: `${composeSignature(page.id)}\n${NOTE}\n${n2m.toMarkdownString(
-            mdBlocks.slice(1)
-          )}`,
+          body: `${composeSignature(page.id)}\n${HEADER_NOTE}\n${composeLink(
+            page
+          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
           title: extractPageTitle(page),
           repoId: existingDiscussion.repository.id,
           discussion: existingDiscussion,
@@ -208,13 +216,11 @@ async function buildUpdatePlan(
         throw new Error(`Category ${categoryName} not found in repo ${repo}`);
       }
 
-      console.log(page);
-
       toCreate.push({
         page,
-        body: `${composeSignature(page.id)}\n${NOTE}\n${n2m.toMarkdownString(
-          mdBlocks.slice(1)
-        )}`,
+        body: `${composeSignature(page.id)}\n${HEADER_NOTE}\n${composeLink(
+          page
+        )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
         title: extractPageTitle(page),
         categoryId: category.id,
         repoId: repoInfo.id,
