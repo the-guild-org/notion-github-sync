@@ -1,0 +1,11 @@
+name = "guild-sync"
+main = "src/index.ts"
+compatibility_date = "2022-06-23"
+
+[vars]
+NOTION_TOKEN = "secret_xG6u8la0IsD86MGjxHd0zwAxNheyDT9Np6SNrq2Khzv"
+GH_BOT_TOKEN = "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"
+
+[triggers]
+crons = ["*/5 * * * *"] # every 5 minutes
+
