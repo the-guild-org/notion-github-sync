@@ -1,0 +1,7 @@
+name = "guild-sync"
+main = "src/index.ts"
+compatibility_date = "2022-06-23"
+
+[triggers]
+crons = ["*/5 * * * *"] # every 5 minutes
+
