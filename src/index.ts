@@ -42,6 +42,11 @@ function composeSignature(pageId: string): string {
   return `<!-- ${pageId} -->`;
 }
 
+function extractPageTitle(page: Page): string {
+  return ((page as any).properties?.title || (page as any).properties?.Title)
+    ?.title[0].plain_text;
+}
+
 async function getExistingDiscussions(octokit: Octokit, login: string) {
   const discussionsByBot = await octokit.graphql(
     /* GraphQL */ `
@@ -173,7 +178,7 @@ async function buildUpdatePlan(
           body: `${composeSignature(page.id)}\n${n2m.toMarkdownString(
             mdBlocks.slice(1)
           )}`,
-          title: (page as any).properties.title.title[0].plain_text,
+          title: extractPageTitle(page),
           repoId: existingDiscussion.repository.id,
           discussion: existingDiscussion,
           categoryId: category.id,
@@ -194,12 +199,14 @@ async function buildUpdatePlan(
         throw new Error(`Category ${categoryName} not found in repo ${repo}`);
       }
 
+      console.log(page);
+
       toCreate.push({
         page,
         body: `${composeSignature(page.id)}\n${n2m.toMarkdownString(
           mdBlocks.slice(1)
         )}`,
-        title: (page as any).properties.title.title[0].plain_text,
+        title: extractPageTitle(page),
         categoryId: category.id,
         repoId: repoInfo.id,
       });
