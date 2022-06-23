@@ -6,15 +6,9 @@ import { MdBlock } from "notion-to-md/build/types";
 export interface Env {
   NOTION_TOKEN: string;
   GH_BOT_TOKEN: string;
-  // Example binding to KV. Learn more at https://developers.cloudflare.com/workers/runtime-apis/kv/
-  // MY_KV_NAMESPACE: KVNamespace;
-  //
-  // Example binding to Durable Object. Learn more at https://developers.cloudflare.com/workers/runtime-apis/durable-objects/
-  // MY_DURABLE_OBJECT: DurableObjectNamespace;
-  //
-  // Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
-  // MY_BUCKET: R2Bucket;
 }
+
+const NOTE = `\n> This page is synced automatically from [The Guild's Notion](the-guild.dev)`;
 
 async function getBotLogin(octokit: Octokit) {
   const {
@@ -146,6 +140,7 @@ async function buildUpdatePlan(
   const toDelete: Array<DeleteRecord> = [];
 
   for (const page of pages) {
+    console.info(`Building plan for page: `, page);
     const existingDiscussion = discussions.find((v) =>
       v.body.startsWith(composeSignature(page.id))
     );
@@ -153,6 +148,8 @@ async function buildUpdatePlan(
     if (existingDiscussion) {
       const mdBlocks = await n2m.pageToMarkdown(page.id, 2);
       const shouldDelete = await shouldDeletePage(mdBlocks);
+
+      console.log(`shouldDelete?`, shouldDelete, mdBlocks);
 
       if (shouldDelete) {
         toDelete.push({
@@ -163,6 +160,12 @@ async function buildUpdatePlan(
         const [, repo, categoryName = "general"] = mdBlocks[0].parent
           .trim()
           .split(" ");
+
+        if (!repo) {
+          console.log(`Skipping page: `, page);
+          continue;
+        }
+
         const [owner, name] = repo.split("/");
         const repoInfo = await getRepoInfo(octokit, name, owner);
         const category = repoInfo.discussionCategories.find(
@@ -175,7 +178,7 @@ async function buildUpdatePlan(
 
         toUpdate.push({
           page,
-          body: `${composeSignature(page.id)}\n${n2m.toMarkdownString(
+          body: `${composeSignature(page.id)}\n${NOTE}\n${n2m.toMarkdownString(
             mdBlocks.slice(1)
           )}`,
           title: extractPageTitle(page),
@@ -189,6 +192,12 @@ async function buildUpdatePlan(
       const [, repo, categoryName = "general"] = mdBlocks[0].parent
         .trim()
         .split(" ");
+
+      if (!repo) {
+        console.log(`Skipping page: `, page);
+        continue;
+      }
+
       const [owner, name] = repo.split("/");
       const repoInfo = await getRepoInfo(octokit, name, owner);
       const category = repoInfo.discussionCategories.find(
@@ -203,7 +212,7 @@ async function buildUpdatePlan(
 
       toCreate.push({
         page,
-        body: `${composeSignature(page.id)}\n${n2m.toMarkdownString(
+        body: `${composeSignature(page.id)}\n${NOTE}\n${n2m.toMarkdownString(
           mdBlocks.slice(1)
         )}`,
         title: extractPageTitle(page),
@@ -375,6 +384,7 @@ export default {
 
       return new Response(JSON.stringify({ plan }), { status: 200 });
     } catch (e) {
+      console.error(e);
       return new Response(
         JSON.stringify({
           error: (e as Error).message,
