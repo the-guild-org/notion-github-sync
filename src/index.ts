@@ -8,7 +8,7 @@ export interface Env {
   GH_BOT_TOKEN: string;
 }
 
-const HEADER_NOTE = `> This page is synced automatically from [The Guild's Notion](the-guild.dev)`;
+const HEADER_NOTE = `> This page is synced automatically from [The Guild's](https://the-guild.dev) Notion`;
 
 async function getBotLogin(octokit: Octokit) {
   const {
