@@ -12,7 +12,7 @@
     "deploy": "wrangler publish"
   },
   "dependencies": {
-    "notion-to-md": "2.4.0",
+    "notion-to-md": "2.4.1",
     "@notionhq/client": "1.0.4",
     "@octokit/core": "3.6.0"
   }
