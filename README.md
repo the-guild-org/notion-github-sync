@@ -53,3 +53,5 @@ To remove a public discussion:
 - Every change to `main` branch will run CI and deploy to prod. 
 - Make sure to configure your `NOTION_TOKEN` and `GH_BOT_TOKEN` (PAT) as part of the env vars. 
 - You can also deploy from local env by running: `npm run deploy`
+
+> If you wish to have a clone of your own, make sure to rename worker name in the `wrangler.toml` file
