@@ -2,6 +2,18 @@ import { Client } from "@notionhq/client";
 import { Octokit } from "@octokit/core";
 import { NotionToMarkdown } from "notion-to-md";
 import { MdBlock } from "notion-to-md/build/types";
+import {
+  CreateDiscussionMutation,
+  CreateIssueMutation,
+  CurrentUserQuery,
+  DeleteDiscussionMutation,
+  DeleteIssueMutation,
+  MyDiscussionsQuery,
+  MyIssuesQuery,
+  RepositoryQuery,
+  UpdateDiscussionMutation,
+  UpdateIssueMutation,
+} from "./types";
 
 export interface Env {
   NOTION_TOKEN: string;
@@ -13,8 +25,8 @@ const HEADER_NOTE = `> This page is synced automatically from [The Guild's](http
 async function getBotLogin(octokit: Octokit) {
   const {
     viewer: { login },
-  } = await octokit.graphql(/* GraphQL */ `
-    query {
+  } = await octokit.graphql<CurrentUserQuery>(/* GraphQL */ `
+    query currentUser {
       viewer {
         login
       }
@@ -49,8 +61,23 @@ function extractPageTitle(page: Page): string {
     ?.title[0].plain_text;
 }
 
+type DiscussionsSearchResult = NonNullable<
+  MyDiscussionsQuery["search"]["nodes"]
+>[number];
+type Discussion = Extract<
+  DiscussionsSearchResult,
+  { __typename: "Discussion" }
+>;
+
+type IssuesSearchResult = NonNullable<MyIssuesQuery["search"]["nodes"]>[number];
+type Issue = Extract<IssuesSearchResult, { __typename: "Issue" }>;
+
+function isDiscussion(obj: DiscussionsSearchResult): obj is Discussion {
+  return obj?.__typename === "Discussion";
+}
+
 async function getExistingDiscussions(octokit: Octokit, login: string) {
-  const discussionsByBot = await octokit.graphql(
+  const discussionsByBot = await octokit.graphql<MyDiscussionsQuery>(
     /* GraphQL */ `
       query myDiscussions($q: String!) {
         search(type: DISCUSSION, query: $q, first: 100) {
@@ -80,18 +107,45 @@ async function getExistingDiscussions(octokit: Octokit, login: string) {
     }
   );
 
-  return (discussionsByBot as any).search.nodes as {
-    title: string;
-    body: string;
-    id: string;
-    repository: {
-      id: string;
-      name: string;
-      owner: {
-        login: string;
-      };
-    };
-  }[];
+  return (discussionsByBot.search.nodes || []).filter(isDiscussion);
+}
+
+function isIssue(obj: IssuesSearchResult): obj is Issue {
+  return obj?.__typename === "Issue";
+}
+
+async function getExistingIssues(octokit: Octokit, login: string) {
+  const issuesByBot = await octokit.graphql<MyIssuesQuery>(
+    /* GraphQL */ `
+      query myIssues($q: String!) {
+        search(type: ISSUE, query: $q, first: 100) {
+          nodes {
+            __typename
+            ... on Issue {
+              title
+              body
+              repository {
+                id
+                owner {
+                  login
+                }
+                name
+              }
+              author {
+                login
+              }
+              id
+            }
+          }
+        }
+      }
+    `,
+    {
+      q: `author:${login}`,
+    }
+  );
+
+  return (issuesByBot.search.nodes || []).filter(isIssue);
 }
 
 type Page = Awaited<ReturnType<Client["search"]>>["results"][number];
@@ -109,9 +163,27 @@ async function shouldDeletePage(mdBlocks: MdBlock[]) {
   return true;
 }
 
-type Discussion = Awaited<ReturnType<typeof getExistingDiscussions>>[number];
+type IssueCreateRecord = {
+  page: Page;
+  repoId: string;
+  title: string;
+  body: string;
+};
 
-type CreateRecord = {
+type IssueUpdateRecord = {
+  page: Page;
+  issue: Issue;
+  repoId: string;
+  title: string;
+  body: string;
+};
+
+type IssueDeleteRecord = {
+  issue: Issue;
+  repoId: string;
+};
+
+type DiscussionCreateRecord = {
   page: Page;
   repoId: string;
   categoryId: string;
@@ -119,7 +191,7 @@ type CreateRecord = {
   body: string;
 };
 
-type UpdateRecord = {
+type DiscussionUpdateRecord = {
   page: Page;
   discussion: Discussion;
   categoryId: string;
@@ -128,115 +200,212 @@ type UpdateRecord = {
   body: string;
 };
 
-type DeleteRecord = {
+type DiscussionDeleteRecord = {
   discussion: Discussion;
   repoId: string;
 };
+
+function distinguishPage(
+  detectionBlock: MdBlock
+):
+  | { type: "issue"; repo: string }
+  | { type: "discussion"; repo: string; categoryName: string }
+  | null {
+  if (!detectionBlock) {
+    return null;
+  }
+
+  const content = detectionBlock.parent.trim().split(" ");
+
+  if (content.length === 0) {
+    return null;
+  }
+
+  const [declaration, repo, type, maybeCategory] = content;
+
+  if (declaration !== "/github-public") {
+    return null;
+  }
+
+  if (type === "issue") {
+    return {
+      type: "issue",
+      repo,
+    };
+  } else if (type === "discussion") {
+    return {
+      type: "discussion",
+      repo,
+      categoryName: maybeCategory || "General",
+    };
+  } else {
+    // this is legacy, just to support empty as discussion
+    return {
+      type: "discussion",
+      repo,
+      categoryName: type || "General",
+    };
+  }
+
+  return null;
+}
 
 async function buildUpdatePlan(
   octokit: Octokit,
   n2m: NotionToMarkdown,
   pages: Page[],
-  discussions: Discussion[]
+  discussions: Discussion[],
+  issues: Issue[]
 ): Promise<{
-  create: Array<CreateRecord>;
-  update: Array<UpdateRecord>;
-  delete: Array<DeleteRecord>;
+  issues: {
+    create: Array<IssueCreateRecord>;
+    update: Array<IssueUpdateRecord>;
+    delete: Array<IssueDeleteRecord>;
+  };
+  discussions: {
+    create: Array<DiscussionCreateRecord>;
+    update: Array<DiscussionUpdateRecord>;
+    delete: Array<DiscussionDeleteRecord>;
+  };
 }> {
-  const toCreate: Array<CreateRecord> = [];
-  const toUpdate: Array<UpdateRecord> = [];
-  const toDelete: Array<DeleteRecord> = [];
+  const outputIssues: {
+    create: Array<IssueCreateRecord>;
+    update: Array<IssueUpdateRecord>;
+    delete: Array<IssueDeleteRecord>;
+  } = {
+    create: [],
+    update: [],
+    delete: [],
+  };
+  const outputDiscussions: {
+    create: Array<DiscussionCreateRecord>;
+    update: Array<DiscussionUpdateRecord>;
+    delete: Array<DiscussionDeleteRecord>;
+  } = {
+    create: [],
+    update: [],
+    delete: [],
+  };
 
   for (const page of pages) {
-    console.info(`Building plan for page: `, page);
+    const pageTitle = extractPageTitle(page);
+    console.info(`Building plan for page: `, pageTitle, page);
+    const mdBlocks = await n2m.pageToMarkdown(page.id, 2);
+    const pageAttributes = distinguishPage(mdBlocks[0]);
+    const notionPageSignature = composeSignature(page.id);
     const existingDiscussion = discussions.find((v) =>
-      v.body.startsWith(composeSignature(page.id))
+      v.body.startsWith(notionPageSignature)
+    );
+    const existingIssue = issues.find((v) =>
+      v.body.startsWith(notionPageSignature)
     );
 
-    if (existingDiscussion) {
-      const mdBlocks = await n2m.pageToMarkdown(page.id, 2);
-      const shouldDelete = await shouldDeletePage(mdBlocks);
-
-      console.log(`shouldDelete?`, shouldDelete, mdBlocks);
-
-      if (shouldDelete) {
-        toDelete.push({
+    if (pageAttributes === null) {
+      if (existingDiscussion) {
+        outputDiscussions.delete.push({
           repoId: existingDiscussion.repository.id,
           discussion: existingDiscussion,
         });
-      } else {
-        const [, repo, categoryName = "general"] = mdBlocks[0].parent
-          .trim()
-          .split(" ");
+      }
 
-        if (!repo) {
-          console.log(`Skipping page: `, page);
-          continue;
-        }
+      if (existingIssue) {
+        outputIssues.delete.push({
+          repoId: existingIssue.repository.id,
+          issue: existingIssue,
+        });
+      }
+    } else if (pageAttributes.type === "discussion") {
+      const [owner, name] = pageAttributes.repo.split("/");
+      const repoInfo = await getRepoInfo(octokit, name, owner);
+      const category = (repoInfo.discussionCategories || []).find(
+        (d: any) =>
+          d.name.toLowerCase() === pageAttributes.categoryName.toLowerCase()
+      );
 
-        const [owner, name] = repo.split("/");
-        const repoInfo = await getRepoInfo(octokit, name, owner);
-        const category = repoInfo.discussionCategories.find(
-          (d: any) => d.name.toLowerCase() === categoryName.toLowerCase()
+      if (!category) {
+        throw new Error(
+          `Category ${pageAttributes.categoryName} not found in repo ${pageAttributes.repo}`
         );
+      }
 
-        if (!category) {
-          throw new Error(`Category ${categoryName} not found in repo ${repo}`);
-        }
-
-        toUpdate.push({
+      if (existingDiscussion) {
+        outputDiscussions.update.push({
           page,
-          body: `${composeSignature(page.id)}\n${HEADER_NOTE}\n${composeLink(
+          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
             page
           )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
-          title: extractPageTitle(page),
+          title: pageTitle,
           repoId: existingDiscussion.repository.id,
           discussion: existingDiscussion,
           categoryId: category.id,
         });
+      } else {
+        outputDiscussions.create.push({
+          page,
+          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
+            page
+          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
+          title: pageTitle,
+          categoryId: category.id,
+          repoId: repoInfo.id,
+        });
       }
-    } else {
-      const mdBlocks = await n2m.pageToMarkdown(page.id, 2);
-      const [, repo, categoryName = "general"] = mdBlocks[0].parent
-        .trim()
-        .split(" ");
+    } else if (pageAttributes.type === "issue") {
+      if (existingIssue) {
+        outputIssues.update.push({
+          page,
+          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
+            page
+          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
+          title: pageTitle,
+          repoId: existingIssue.repository.id,
+          issue: existingIssue,
+        });
+      } else {
+        const [owner, name] = pageAttributes.repo.split("/");
+        const repoInfo = await getRepoInfo(octokit, name, owner);
 
-      if (!repo) {
-        console.log(`Skipping page: `, page);
-        continue;
+        outputIssues.create.push({
+          page,
+          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
+            page
+          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
+          title: pageTitle,
+          repoId: repoInfo.id,
+        });
       }
-
-      const [owner, name] = repo.split("/");
-      const repoInfo = await getRepoInfo(octokit, name, owner);
-      const category = repoInfo.discussionCategories.find(
-        (d: any) => d.name.toLowerCase() === categoryName.toLowerCase()
-      );
-
-      if (!category) {
-        throw new Error(`Category ${categoryName} not found in repo ${repo}`);
-      }
-
-      toCreate.push({
-        page,
-        body: `${composeSignature(page.id)}\n${HEADER_NOTE}\n${composeLink(
-          page
-        )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
-        title: extractPageTitle(page),
-        categoryId: category.id,
-        repoId: repoInfo.id,
-      });
     }
   }
 
   return {
-    create: toCreate,
-    delete: toDelete,
-    update: toUpdate,
+    issues: outputIssues,
+    discussions: outputDiscussions,
   };
 }
 
-async function getRepoInfo(octokit: Octokit, name: string, owner: string) {
-  const { repository } = await octokit.graphql(
+const repoInfoCache = new Map<
+  string,
+  Awaited<ReturnType<typeof getRepoInfo>>
+>();
+
+async function getRepoInfo(
+  octokit: Octokit,
+  name: string,
+  owner: string
+): Promise<{
+  id: string;
+  discussionCategories: ({
+    __typename?: "DiscussionCategory" | undefined;
+    id: string;
+    name: string;
+  } | null)[];
+}> {
+  const key = `${owner}/${name}`;
+
+  if (repoInfoCache.has(key)) {
+    return repoInfoCache.get(key)!;
+  }
+  const { repository } = await octokit.graphql<RepositoryQuery>(
     /* GraphQL */ `
       query repository($name: String!, $owner: String!) {
         repository(name: $name, owner: $owner, followRenames: true) {
@@ -256,17 +425,21 @@ async function getRepoInfo(octokit: Octokit, name: string, owner: string) {
     }
   );
 
-  return {
-    id: repository.id as string,
-    discussionCategories: repository.discussionCategories.nodes as {
-      id: string;
-      name: string;
-    }[],
+  const result = {
+    id: repository!.id,
+    discussionCategories: repository?.discussionCategories.nodes || [],
   };
+
+  repoInfoCache.set(key, result);
+
+  return result;
 }
 
-async function createDiscussion(octokit: Octokit, record: CreateRecord) {
-  const createdDiscussion = await octokit.graphql(
+async function createDiscussion(
+  octokit: Octokit,
+  record: DiscussionCreateRecord
+) {
+  await octokit.graphql<CreateDiscussionMutation>(
     /* GraphQL */ `
       mutation createDiscussion(
         $repoId: ID!
@@ -299,8 +472,36 @@ async function createDiscussion(octokit: Octokit, record: CreateRecord) {
     }
   );
 }
-async function deleteDiscussion(octokit: Octokit, record: DeleteRecord) {
-  await octokit.graphql(
+
+async function createIssue(octokit: Octokit, record: IssueCreateRecord) {
+  await octokit.graphql<CreateIssueMutation>(
+    /* GraphQL */ `
+      mutation createIssue($repoId: ID!, $title: String!, $body: String!) {
+        createIssue(
+          input: { repositoryId: $repoId, title: $title, body: $body }
+        ) {
+          clientMutationId
+          issue {
+            id
+            title
+            url
+          }
+        }
+      }
+    `,
+    {
+      repoId: record.repoId,
+      title: record.title,
+      body: record.body,
+    }
+  );
+}
+
+async function deleteDiscussion(
+  octokit: Octokit,
+  record: DiscussionDeleteRecord
+) {
+  await octokit.graphql<DeleteDiscussionMutation>(
     /* GraphQL */ `
       mutation deleteDiscussion($id: ID!) {
         deleteDiscussion(input: { id: $id }) {
@@ -313,10 +514,29 @@ async function deleteDiscussion(octokit: Octokit, record: DeleteRecord) {
     }
   );
 }
-async function updateDiscussion(octokit: Octokit, record: UpdateRecord) {
-  await octokit.graphql(
+
+async function deleteIssue(octokit: Octokit, record: IssueDeleteRecord) {
+  await octokit.graphql<DeleteIssueMutation>(
     /* GraphQL */ `
-      mutation deleteDiscussion(
+      mutation deleteIssue($id: ID!) {
+        deleteIssue(input: { issueId: $id }) {
+          __typename
+        }
+      }
+    `,
+    {
+      id: record.issue.id,
+    }
+  );
+}
+
+async function updateDiscussion(
+  octokit: Octokit,
+  record: DiscussionUpdateRecord
+) {
+  await octokit.graphql<UpdateDiscussionMutation>(
+    /* GraphQL */ `
+      mutation updateDiscussion(
         $id: ID!
         $title: String!
         $body: String!
@@ -343,6 +563,23 @@ async function updateDiscussion(octokit: Octokit, record: UpdateRecord) {
   );
 }
 
+async function updateIssue(octokit: Octokit, record: IssueUpdateRecord) {
+  await octokit.graphql<UpdateIssueMutation>(
+    /* GraphQL */ `
+      mutation updateIssue($id: ID!, $title: String!, $body: String!) {
+        updateIssue(input: { id: $id, title: $title, body: $body }) {
+          __typename
+        }
+      }
+    `,
+    {
+      id: record.issue.id,
+      title: record.title,
+      body: record.body,
+    }
+  );
+}
+
 async function run(env: Env) {
   const notion = new Client({
     auth: env.NOTION_TOKEN,
@@ -353,30 +590,53 @@ async function run(env: Env) {
   const login = await getBotLogin(octokit);
   const relevantPages = await getSharedNotionPages(notion);
   const discussions = await getExistingDiscussions(octokit, login);
-  const plan = await buildUpdatePlan(octokit, n2m, relevantPages, discussions);
+  const issues = await getExistingIssues(octokit, login);
+  const { discussions: discussionsPlan, issues: issuesPlan } =
+    await buildUpdatePlan(octokit, n2m, relevantPages, discussions, issues);
 
-  console.info(`Built sync plan:`, plan);
+  console.info(`Built Discussion sync plan:`, discussionsPlan);
+  console.info(`Built Issues sync plan:`, issuesPlan);
 
-  for (const item of plan.delete) {
+  for (const item of discussionsPlan.delete) {
     console.info(
       `Deleting discussion with id ${item.discussion.id}: "${item.discussion.title}"`
     );
     await deleteDiscussion(octokit, item);
   }
 
-  for (const item of plan.update) {
+  for (const item of discussionsPlan.update) {
     console.info(
       `Updating discussion with id ${item.discussion.id}: "${item.title}"`
     );
     await updateDiscussion(octokit, item);
   }
 
-  for (const item of plan.create) {
+  for (const item of discussionsPlan.create) {
     console.info(`Creating discussion: "${item.title}"`);
     await createDiscussion(octokit, item);
   }
 
-  return plan;
+  for (const item of issuesPlan.delete) {
+    console.info(
+      `Deleting issue with id ${item.issue.id}: "${item.issue.title}"`
+    );
+    await deleteIssue(octokit, item);
+  }
+
+  for (const item of issuesPlan.update) {
+    console.info(`Updating issue with id ${item.issue.id}: "${item.title}"`);
+    await updateIssue(octokit, item);
+  }
+
+  for (const item of issuesPlan.create) {
+    console.info(`Creating issue: "${item.title}"`);
+    await createIssue(octokit, item);
+  }
+
+  return {
+    discussionsPlan,
+    issuesPlan,
+  };
 }
 
 export default {
