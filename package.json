@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "devDependencies": {
     "dotenv": "16.0.1",
-    "@graphql-codegen/cli": "2.7.0",
+    "@graphql-codegen/cli": "2.8.0",
     "@graphql-codegen/typescript": "2.6.0",
     "@graphql-codegen/typescript-operations": "2.4.3",
     "@cloudflare/workers-types": "3.14.0",
