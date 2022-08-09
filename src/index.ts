@@ -405,6 +405,7 @@ async function getRepoInfo(
   if (repoInfoCache.has(key)) {
     return repoInfoCache.get(key)!;
   }
+
   const { repository } = await octokit.graphql<RepositoryQuery>(
     /* GraphQL */ `
       query repository($name: String!, $owner: String!) {
@@ -588,50 +589,49 @@ async function run(env: Env) {
   const n2m = new NotionToMarkdown({ notionClient: notion });
   const octokit = new Octokit({ auth: env.GH_BOT_TOKEN });
   const login = await getBotLogin(octokit);
-  const relevantPages = await getSharedNotionPages(notion);
-  const discussions = await getExistingDiscussions(octokit, login);
-  const issues = await getExistingIssues(octokit, login);
+  const [relevantPages, discussions, issues] = await Promise.all([
+    getSharedNotionPages(notion),
+    getExistingDiscussions(octokit, login),
+    getExistingIssues(octokit, login),
+  ]);
   const { discussions: discussionsPlan, issues: issuesPlan } =
     await buildUpdatePlan(octokit, n2m, relevantPages, discussions, issues);
 
   console.info(`Built Discussion sync plan:`, discussionsPlan);
   console.info(`Built Issues sync plan:`, issuesPlan);
 
-  for (const item of discussionsPlan.delete) {
-    console.info(
-      `Deleting discussion with id ${item.discussion.id}: "${item.discussion.title}"`
-    );
-    await deleteDiscussion(octokit, item);
-  }
-
-  for (const item of discussionsPlan.update) {
-    console.info(
-      `Updating discussion with id ${item.discussion.id}: "${item.title}"`
-    );
-    await updateDiscussion(octokit, item);
-  }
-
-  for (const item of discussionsPlan.create) {
-    console.info(`Creating discussion: "${item.title}"`);
-    await createDiscussion(octokit, item);
-  }
-
-  for (const item of issuesPlan.delete) {
-    console.info(
-      `Deleting issue with id ${item.issue.id}: "${item.issue.title}"`
-    );
-    await deleteIssue(octokit, item);
-  }
-
-  for (const item of issuesPlan.update) {
-    console.info(`Updating issue with id ${item.issue.id}: "${item.title}"`);
-    await updateIssue(octokit, item);
-  }
-
-  for (const item of issuesPlan.create) {
-    console.info(`Creating issue: "${item.title}"`);
-    await createIssue(octokit, item);
-  }
+  await Promise.all([
+    ...discussionsPlan.delete.map(async (item) => {
+      console.info(
+        `Deleting discussion with id ${item.discussion.id}: "${item.discussion.title}"`
+      );
+      await deleteDiscussion(octokit, item);
+    }),
+    ...discussionsPlan.update.map(async (item) => {
+      console.info(
+        `Updating discussion with id ${item.discussion.id}: "${item.title}"`
+      );
+      await updateDiscussion(octokit, item);
+    }),
+    ...discussionsPlan.create.map(async (item) => {
+      console.info(`Creating discussion: "${item.title}"`);
+      await createDiscussion(octokit, item);
+    }),
+    ...issuesPlan.delete.map(async (item) => {
+      console.info(
+        `Deleting issue with id ${item.issue.id}: "${item.issue.title}"`
+      );
+      await deleteIssue(octokit, item);
+    }),
+    ...issuesPlan.update.map(async (item) => {
+      console.info(`Updating issue with id ${item.issue.id}: "${item.title}"`);
+      await updateIssue(octokit, item);
+    }),
+    ...issuesPlan.create.map(async (item) => {
+      console.info(`Creating issue: "${item.title}"`);
+      await createIssue(octokit, item);
+    }),
+  ]);
 
   return {
     discussionsPlan,
