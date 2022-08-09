@@ -120,7 +120,7 @@ async function getExistingDiscussions(octokit: Octokit, login: string) {
       }
     `,
     {
-      q: `author:${login}`,
+      q: `author:${login} -repo:the-guild-org/crisp-chats`,
     }
   );
 
@@ -158,7 +158,7 @@ async function getExistingIssues(octokit: Octokit, login: string) {
       }
     `,
     {
-      q: `author:${login}`,
+      q: `author:${login} -repo:the-guild-org/crisp-chats`,
     }
   );
 
@@ -166,19 +166,6 @@ async function getExistingIssues(octokit: Octokit, login: string) {
 }
 
 type Page = Awaited<ReturnType<Client["search"]>>["results"][number];
-
-async function shouldDeletePage(mdBlocks: MdBlock[]) {
-  if (
-    mdBlocks.length > 0 &&
-    mdBlocks[0].parent &&
-    typeof mdBlocks[0].parent === "string" &&
-    mdBlocks[0].parent.trim().startsWith("/github-public")
-  ) {
-    return false;
-  }
-
-  return true;
-}
 
 type IssueCreateRecord = {
   page: Page;
@@ -304,12 +291,11 @@ async function buildUpdatePlan(
     delete: [],
   };
 
-  const modified = await Promise.all(
+  await Promise.all(
     pages.map(async (page) => {
       const pageTitle = extractPageTitle(page);
 
       if (!pageTitle) {
-        console.warn(`Skipped page due to missing title info:`, page);
         return;
       }
 
@@ -619,6 +605,7 @@ async function run(env: Env) {
     getExistingDiscussions(octokit, login),
     getExistingIssues(octokit, login),
   ]);
+  console.log("existing issues found:", issues);
   const { discussions: discussionsPlan, issues: issuesPlan } =
     await buildUpdatePlan(octokit, n2m, relevantPages, discussions, issues);
 
