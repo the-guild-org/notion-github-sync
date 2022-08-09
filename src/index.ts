@@ -56,9 +56,26 @@ function composeSignature(pageId: string): string {
   return `<!-- ${pageId} -->`;
 }
 
-function extractPageTitle(page: Page): string {
-  return ((page as any).properties?.title || (page as any).properties?.Title)
-    ?.title[0].plain_text;
+function extractPageTitle(page: Page): string | null {
+  const pageTitleProps =
+    (page as any).properties?.title || (page as any).properties?.Title;
+
+  if (!pageTitleProps) {
+    return null;
+  }
+
+  try {
+    const titleRecord = pageTitleProps.title?.[0];
+    if (!titleRecord) {
+      return null;
+    }
+
+    return titleRecord.plain_text || null;
+  } catch (e) {
+    console.error("failed on pageTitleProps", page);
+
+    return null;
+  }
 }
 
 type DiscussionsSearchResult = NonNullable<
@@ -287,95 +304,103 @@ async function buildUpdatePlan(
     delete: [],
   };
 
-  for (const page of pages) {
-    const pageTitle = extractPageTitle(page);
-    console.info(`Building plan for page: `, pageTitle, page);
-    const mdBlocks = await n2m.pageToMarkdown(page.id, 2);
-    const pageAttributes = distinguishPage(mdBlocks[0]);
-    const notionPageSignature = composeSignature(page.id);
-    const existingDiscussion = discussions.find((v) =>
-      v.body.startsWith(notionPageSignature)
-    );
-    const existingIssue = issues.find((v) =>
-      v.body.startsWith(notionPageSignature)
-    );
+  const modified = await Promise.all(
+    pages.map(async (page) => {
+      const pageTitle = extractPageTitle(page);
 
-    if (pageAttributes === null) {
-      if (existingDiscussion) {
-        outputDiscussions.delete.push({
-          repoId: existingDiscussion.repository.id,
-          discussion: existingDiscussion,
-        });
+      if (!pageTitle) {
+        console.warn(`Skipped page due to missing title info:`, page);
+        return;
       }
 
-      if (existingIssue) {
-        outputIssues.delete.push({
-          repoId: existingIssue.repository.id,
-          issue: existingIssue,
-        });
-      }
-    } else if (pageAttributes.type === "discussion") {
-      const [owner, name] = pageAttributes.repo.split("/");
-      const repoInfo = await getRepoInfo(octokit, name, owner);
-      const category = (repoInfo.discussionCategories || []).find(
-        (d: any) =>
-          d.name.toLowerCase() === pageAttributes.categoryName.toLowerCase()
+      console.info(`Building plan for page: `, pageTitle, page);
+      const mdBlocks = await n2m.pageToMarkdown(page.id, 2);
+      const pageAttributes = distinguishPage(mdBlocks[0]);
+      const notionPageSignature = composeSignature(page.id);
+      const existingDiscussion = discussions.find((v) =>
+        v.body.startsWith(notionPageSignature)
+      );
+      const existingIssue = issues.find((v) =>
+        v.body.startsWith(notionPageSignature)
       );
 
-      if (!category) {
-        throw new Error(
-          `Category ${pageAttributes.categoryName} not found in repo ${pageAttributes.repo}`
-        );
-      }
+      if (pageAttributes === null) {
+        if (existingDiscussion) {
+          outputDiscussions.delete.push({
+            repoId: existingDiscussion.repository.id,
+            discussion: existingDiscussion,
+          });
+        }
 
-      if (existingDiscussion) {
-        outputDiscussions.update.push({
-          page,
-          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
-            page
-          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
-          title: pageTitle,
-          repoId: existingDiscussion.repository.id,
-          discussion: existingDiscussion,
-          categoryId: category.id,
-        });
-      } else {
-        outputDiscussions.create.push({
-          page,
-          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
-            page
-          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
-          title: pageTitle,
-          categoryId: category.id,
-          repoId: repoInfo.id,
-        });
-      }
-    } else if (pageAttributes.type === "issue") {
-      if (existingIssue) {
-        outputIssues.update.push({
-          page,
-          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
-            page
-          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
-          title: pageTitle,
-          repoId: existingIssue.repository.id,
-          issue: existingIssue,
-        });
-      } else {
+        if (existingIssue) {
+          outputIssues.delete.push({
+            repoId: existingIssue.repository.id,
+            issue: existingIssue,
+          });
+        }
+      } else if (pageAttributes.type === "discussion") {
         const [owner, name] = pageAttributes.repo.split("/");
         const repoInfo = await getRepoInfo(octokit, name, owner);
+        const category = (repoInfo.discussionCategories || []).find(
+          (d: any) =>
+            d.name.toLowerCase() === pageAttributes.categoryName.toLowerCase()
+        );
 
-        outputIssues.create.push({
-          page,
-          body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
-            page
-          )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
-          title: pageTitle,
-          repoId: repoInfo.id,
-        });
+        if (!category) {
+          throw new Error(
+            `Category ${pageAttributes.categoryName} not found in repo ${pageAttributes.repo}`
+          );
+        }
+
+        if (existingDiscussion) {
+          outputDiscussions.update.push({
+            page,
+            body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
+              page
+            )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
+            title: pageTitle,
+            repoId: existingDiscussion.repository.id,
+            discussion: existingDiscussion,
+            categoryId: category.id,
+          });
+        } else {
+          outputDiscussions.create.push({
+            page,
+            body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
+              page
+            )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
+            title: pageTitle,
+            categoryId: category.id,
+            repoId: repoInfo.id,
+          });
+        }
+      } else if (pageAttributes.type === "issue") {
+        if (existingIssue) {
+          outputIssues.update.push({
+            page,
+            body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
+              page
+            )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
+            title: pageTitle,
+            repoId: existingIssue.repository.id,
+            issue: existingIssue,
+          });
+        } else {
+          const [owner, name] = pageAttributes.repo.split("/");
+          const repoInfo = await getRepoInfo(octokit, name, owner);
+
+          outputIssues.create.push({
+            page,
+            body: `${notionPageSignature}\n${HEADER_NOTE}\n${composeLink(
+              page
+            )}\n${n2m.toMarkdownString(mdBlocks.slice(1))}`,
+            title: pageTitle,
+            repoId: repoInfo.id,
+          });
+        }
       }
-    }
-  }
+    })
+  );
 
   return {
     issues: outputIssues,
@@ -647,7 +672,7 @@ export default {
   ): Promise<Response> {
     try {
       const plan = await run(env);
-
+      console.info(`Sync result:`, plan);
       return new Response(JSON.stringify({ plan }), { status: 200 });
     } catch (e) {
       console.error(e);
@@ -666,6 +691,6 @@ export default {
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    await run(env);
+    console.info(`Scheduled sync result: `, await run(env));
   },
 };
