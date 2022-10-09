@@ -21,9 +21,13 @@ export interface Env {
   DRY_RUN?: string;
   ENABLE_FETCH?: string;
   CUSTOM_HEADER_LINK?: string;
+  IGNORED_REPOS?: string;
 }
 
 async function run(env: Env) {
+  const ignoredRepos = (env.IGNORED_REPOS || "")
+    .split(",")
+    .map((v) => v.trim());
   const shouldExecute = !env.DRY_RUN;
   const botBrand = env.CUSTOM_HEADER_LINK ? `${env.CUSTOM_HEADER_LINK} ` : "";
   const headerNote = `> This page is synced automatically from ${botBrand}Notion`;
@@ -34,12 +38,15 @@ async function run(env: Env) {
   const n2m = new NotionToMarkdown({ notionClient: notion });
   const octokit = new Octokit({ auth: env.GH_BOT_TOKEN });
   const login = await getBotLogin(octokit);
+  console.info(`GitHub user identified as: ${login}`);
   const [relevantPages, discussions, issues] = await Promise.all([
     getSharedNotionPages(notion),
-    getExistingDiscussions(octokit, login),
-    getExistingIssues(octokit, login),
+    getExistingDiscussions(octokit, login, ignoredRepos),
+    getExistingIssues(octokit, login, ignoredRepos),
   ]);
-  console.log("existing issues found:", issues);
+  console.info("Found existing issues:", issues);
+  console.info("Found existing discussions:", discussions);
+  console.info("Found shared Notion pages:", relevantPages);
   const { discussions: discussionsPlan, issues: issuesPlan } =
     await buildUpdatePlan(
       octokit,
@@ -50,8 +57,8 @@ async function run(env: Env) {
       headerNote
     );
 
-  console.info(`Built Discussion sync plan:`, discussionsPlan);
-  console.info(`Built Issues sync plan:`, issuesPlan);
+  console.info(`Built GitHub Discussion sync plan:`, discussionsPlan);
+  console.info(`Built GitHub Issues sync plan:`, issuesPlan);
 
   await Promise.all([
     ...discussionsPlan.delete.map(async (item) => {

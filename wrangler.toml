@@ -8,3 +8,4 @@ crons = ["*/5 * * * *"] # every 5 minutes
 [vars]
 CUSTOM_HEADER_LINK = "[The Guild's](https://the-guild.dev)"
 ENABLE_FETCH = "1"
+IGNORED_REPOS = "the-guild-org/crisp-chats"

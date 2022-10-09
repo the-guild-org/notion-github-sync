@@ -66,6 +66,7 @@ The following configurations can be set in the env of your project, in order to 
 - `DRY_RUN` - set to `1` if you wish to just test the create/update/delete plan of this bot, without affecting any data on GitHub.
 - `ENABLE_FETCH` - Set to `1` to enable. This will enable the `fetch` event for the worker, this is helpful for development if you want to trigger the bot manually, or if you wish your bot to have a manual trigger.
 - `CUSTOM_HEADER_LINK` - customize the link added to the header of every GitHub issue/discussion. To use an external like, you can add markdown, for example: `[The Guild's](https://the-guild.dev)`.
+- `IGNORED_REPOS` - If the GitHub user you are using, is used for creating other issues/discussions, or a real (non-bot) user, you can reduce the stress of loading existing issues/discussion with ignoring some repos. This field is comma-separated (for example: `user/repo1,user/repo2`)
 
 For local development, please add your config to a file called `.dev.vars`
 

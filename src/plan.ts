@@ -5,6 +5,7 @@ import {
   composeLink,
   composeSignature,
   extractPageTitle,
+  shouldHandlePage,
 } from "./notion-helpers";
 import {
   Discussion,
@@ -107,10 +108,21 @@ export async function buildUpdatePlan(
       const pageTitle = extractPageTitle(page);
 
       if (!pageTitle) {
+        console.warn(`Notion object with id ${page.id} has no title, skipping`);
+
         return;
       }
 
-      console.info(`Building plan for page: `, pageTitle, page);
+      const shouldHandle = shouldHandlePage(page);
+
+      if (!shouldHandle) {
+        console.warn(
+          `Notion object with title ${pageTitle} is not a syncable page, skipping`
+        );
+
+        return;
+      }
+
       const mdBlocks = await n2m.pageToMarkdown(page.id, 2);
       const pageAttributes = distinguishPage(mdBlocks[0]);
       const notionPageSignature = composeSignature(page.id);
@@ -122,6 +134,8 @@ export async function buildUpdatePlan(
       );
 
       if (pageAttributes === null) {
+        console.warn(`Notion page with title "${pageTitle}" has no attributes`);
+
         if (existingDiscussion) {
           outputDiscussions.delete.push({
             repoId: existingDiscussion.repository.id,

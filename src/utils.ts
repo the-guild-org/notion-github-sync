@@ -31,7 +31,11 @@ function isDiscussion(obj: DiscussionsSearchResult): obj is Discussion {
   return obj?.__typename === "Discussion";
 }
 
-export async function getExistingDiscussions(octokit: Octokit, login: string) {
+export async function getExistingDiscussions(
+  octokit: Octokit,
+  login: string,
+  ignoredRepos: string[] = []
+) {
   const discussionsByBot = await octokit.graphql<MyDiscussionsQuery>(
     /* GraphQL */ `
       query myDiscussions($q: String!) {
@@ -58,7 +62,7 @@ export async function getExistingDiscussions(octokit: Octokit, login: string) {
       }
     `,
     {
-      q: `author:${login} -repo:the-guild-org/crisp-chats`,
+      q: `author:${login} ${ignoredRepos.map((v) => `-repo:${v}`).join(" ")}`,
     }
   );
 
@@ -69,7 +73,11 @@ function isIssue(obj: IssuesSearchResult): obj is Issue {
   return obj?.__typename === "Issue";
 }
 
-export async function getExistingIssues(octokit: Octokit, login: string) {
+export async function getExistingIssues(
+  octokit: Octokit,
+  login: string,
+  ignoredRepos: string[]
+) {
   const issuesByBot = await octokit.graphql<MyIssuesQuery>(
     /* GraphQL */ `
       query myIssues($q: String!) {
@@ -96,7 +104,7 @@ export async function getExistingIssues(octokit: Octokit, login: string) {
       }
     `,
     {
-      q: `author:${login} -repo:the-guild-org/crisp-chats`,
+      q: `author:${login} ${ignoredRepos.map((v) => `-repo:${v}`).join(" ")}`,
     }
   );
 
