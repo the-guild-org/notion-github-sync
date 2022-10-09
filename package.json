@@ -13,7 +13,7 @@
   },
   "private": true,
   "scripts": {
-    "generate": "graphql-codegen --require dotenv/config --config codegen.yml",
+    "generate": "graphql-codegen --config codegen.ts",
     "prestart": "npm run generate",
     "predeploy": "npm run generate",
     "start": "wrangler dev",
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "notion-to-md": "2.5.5",
-    "@notionhq/client": "1.0.4",
+    "@notionhq/client": "2.2.1",
     "@octokit/core": "4.0.5"
   }
 }
