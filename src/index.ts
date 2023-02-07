@@ -136,6 +136,7 @@ export default {
     ctx: ExecutionContext
   ): Promise<void> {
     const result = await run(env);
+    console.info(`Run...`);
     console.info(`Scheduled sync result: `, result);
   },
 };
