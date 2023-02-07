@@ -1,69 +1,67 @@
 import { Client } from "@notionhq/client";
+import { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints";
 
-type GetDataBaseNotionProps = {
-  notion: Client;
-  databaseId: string;
+export function createNotionClient(options: {
   token: string;
-  propertyName: string;
-  checkbox: boolean;
-};
-
-export async function getDataBaseNotion({
-  notion,
-  databaseId,
-  token,
-  propertyName,
-  checkbox,
-}: GetDataBaseNotionProps) {
-  const databaseList = await notion.databases.query({
-    page_size: 100,
-    database_id: databaseId,
-    auth: token,
-    filter: {
-      property: "object",
-      and: [
-        {
-          property: propertyName,
-          checkbox: {
-            equals: checkbox,
-          },
-        },
-      ],
-    },
+  databaseId: string;
+}) {
+  const notion = new Client({
+    auth: options.token,
+    notionVersion: "2022-06-28",
   });
 
-  const list = (databaseList.results || []).map((v) => v);
-  const hasNextPage = databaseList.has_more;
-
   return {
-    list,
-    hasNextPage,
+    async getDataBaseNotion(propertyName: string, checkbox: boolean) {
+      const databaseList = await notion.databases.query({
+        page_size: 100,
+        database_id: options.databaseId,
+        auth: options.token,
+        filter: {
+          property: "object",
+          and: [
+            {
+              property: propertyName,
+              checkbox: {
+                equals: checkbox,
+              },
+            },
+          ],
+        },
+      });
+      const list = databaseList.results || [];
+      const hasNextPage = databaseList.has_more;
+
+      return {
+        list,
+        hasNextPage,
+      };
+    },
+    async getAllInfoFromDatabaseNotion(pageCount: number = 1) {
+      let databaseList = [];
+      const propertyName = "Visible on Roadmap?";
+
+      for (let i = 0; i < pageCount; i++) {
+        const pageData = await this.getDataBaseNotion(propertyName, true);
+        databaseList.push(...pageData.list);
+        const result = pageData.hasNextPage;
+        if (!result) {
+          break;
+        }
+      }
+      return databaseList[0] as PageObjectResponse;
+    },
+    async findTasksByEffectedLibrary(libraryName: string) {
+      const results = await notion.databases.query({
+        database_id: options.databaseId,
+        filter: {
+          property: "Effected Library",
+          multi_select: {
+            contains: libraryName,
+          },
+        },
+      });
+
+      return (results.results[0] as PageObjectResponse) || null;
+    },
   };
-}
-
-export async function getAllInfoFromDatabaseNotion(
-  notion: Client,
-  databaseId: string,
-  token: string,
-  checkbox: boolean = true,
-  pageCount: number = 1
-) {
-  let databaseList = [];
-  const propertyName = "Visible on Roadmap?";
-
-  for (let i = 0; i < pageCount; i++) {
-    const pageData = await getDataBaseNotion({
-      notion,
-      databaseId,
-      token,
-      propertyName,
-      checkbox,
-    });
-    databaseList.push(...pageData.list);
-    const result = pageData.hasNextPage;
-    if (!result) {
-      break;
-    }
-  }
-  return databaseList;
 }
