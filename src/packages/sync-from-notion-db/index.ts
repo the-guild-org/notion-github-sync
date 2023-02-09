@@ -1,16 +1,29 @@
-import { Client } from "@notionhq/client";
 import { Env } from "../..";
 import { createNotionClient } from "./utils";
 
-export function runSyncFromNotionDataBase(env: Env, databaseId: string) {
+export async function runSyncFromNotionDataBase(env: Env) {
   const notion = createNotionClient({
-    databaseId: databaseId,
     token: env.NOTION_TOKEN,
   });
 
-  // 1. Fetch all tasks from Notion database - Visible on Roadmap? = true
-  const dataBaseList = notion.getAllInfoFromDatabaseNotion();
-  // 2. Sort tasks by Effected Library
+  const libraries = await notion.queryPublishRoadmapLibraries();
+  console.log(
+    "libraries.results",
+    libraries?.results.map((v) => v.id),
+    libraries?.results.map((v) => v.object)
+  );
 
-  // 3. Searche GitHub for the issues/discussion, and creates/updates it on GitHub
+  if (libraries) {
+    for (const library of libraries?.results) {
+      const tasks = await notion.getAllInfoFromDatabaseNotion(library.id, 5);
+      console.log(
+        "library.tasks",
+        tasks.map((v) => v.object),
+        tasks.map((v) => v.id)
+      );
+      for (const task of tasks) {
+        console.log("task", task);
+      }
+    }
+  }
 }

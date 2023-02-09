@@ -2,6 +2,7 @@ import { Client } from "@notionhq/client";
 import { Octokit } from "@octokit/core";
 import { NotionToMarkdown } from "notion-to-md";
 import { getSharedNotionPages } from "./notion-helpers";
+import { runSyncFromNotionDataBase } from "./packages/sync-from-notion-db";
 import { buildUpdatePlan } from "./plan";
 import {
   createDiscussion,
@@ -25,6 +26,7 @@ export interface Env {
 }
 
 async function run(env: Env) {
+  await runSyncFromNotionDataBase(env);
   const ignoredRepos = (env.IGNORED_REPOS || "")
     .split(",")
     .map((v) => v.trim());
