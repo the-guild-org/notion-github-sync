@@ -26,7 +26,6 @@ export interface Env {
 }
 
 async function run(env: Env) {
-  await runSyncFromNotionDataBase(env);
   const ignoredRepos = (env.IGNORED_REPOS || "")
     .split(",")
     .map((v) => v.trim());
@@ -42,7 +41,7 @@ async function run(env: Env) {
   const login = await getBotLogin(octokit);
   console.info(`GitHub user identified as: ${login}`);
   const [relevantPages, discussions, issues] = await Promise.all([
-    getSharedNotionPages(notion),
+    runSyncFromNotionDataBase(env),
     getExistingDiscussions(octokit, login, ignoredRepos),
     getExistingIssues(octokit, login, ignoredRepos),
   ]);
