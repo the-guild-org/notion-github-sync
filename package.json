@@ -2,7 +2,7 @@
   "name": "guild-sync",
   "version": "0.0.0",
   "devDependencies": {
-    "dotenv": "16.0.3",
+    "dotenv": "16.4.7",
     "@graphql-codegen/cli": "2.13.6",
     "@graphql-codegen/typescript": "2.7.4",
     "@graphql-codegen/typescript-operations": "2.5.4",
